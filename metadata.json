@@ -1,0 +1,7 @@
+{
+  "name": "HBS Store Data Hub",
+  "description": "A sophisticated enterprise dashboard for store data management, analytics, and regional brand strategy visualization.",
+  "requestFramePermissions": [
+    "geolocation"
+  ]
+}
