@@ -1,38 +1,159 @@
-
-import React, { useState } from 'react';
-import { 
-  MapPin, 
-  Info, 
-  Layers, 
-  Crosshair, 
-  Filter, 
-  ShoppingBag, 
-  Search, 
-  ChevronRight, 
+import React, { useState, useEffect, useRef } from 'react';
+import {
+  MapPin,
+  Search,
+  Filter,
   Target,
   ArrowUpRight,
   Map as MapIcon,
-  Navigation
+  Crosshair,
+  Loader2
 } from 'lucide-react';
-
-const mockStores = [
-  { id: '1', name: '강남 삼성타운점', brand: 'HBS Premium', sales: '+18.5%', status: 'Active', address: '서울 강남구 테헤란로' },
-  { id: '2', name: '서초 본점', brand: 'HBS Black', sales: '+12.2%', status: 'Active', address: '서울 서초구 반포동' },
-  { id: '3', name: '잠실 롯데타워점', brand: 'HBS Premium', sales: '+5.7%', status: 'Warning', address: '서울 송파구 잠실동' },
-  { id: '4', name: '압구정 로데오', brand: 'HBS Classic', sales: '-2.1%', status: 'Active', address: '서울 강남구 신사동' },
-  { id: '5', name: '신사 가로수길점', brand: 'HBS Black', sales: '+24.1%', status: 'Active', address: '서울 강남구 도산대로' },
-  { id: '6', name: '청담 플래그십', brand: 'HBS Premium', sales: '+8.9%', status: 'Active', address: '서울 강남구 압구정로' },
-  { id: '7', name: '코엑스몰 지점', brand: 'HBS Classic', sales: '+0.5%', status: 'Active', address: '서울 강남구 영동대로' },
-];
+import { supabase } from '../lib/supabase';
+import type { StoreMaster } from '../types/store';
 
 const MapStrategy: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedStore, setSelectedStore] = useState<string | null>('1');
+  const [selectedStore, setSelectedStore] = useState<string | null>(null);
+  const [mapError, setMapError] = useState<string | null>(null);
+  const [stores, setStores] = useState<StoreMaster[]>([]);
+  const [loading, setLoading] = useState(true);
+  const mapRef = useRef<any>(null);
+  const markersRef = useRef<any[]>([]);
 
-  const filteredStores = mockStores.filter(s => 
-    s.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
-    s.address.toLowerCase().includes(searchQuery.toLowerCase())
+  // Fetch stores from Supabase
+  useEffect(() => {
+    const fetchStores = async () => {
+      setLoading(true);
+      try {
+        const { data, error } = await supabase
+          .from('store_master')
+          .select('*')
+          .not('lat', 'is', null)
+          .not('lng', 'is', null)
+          .order('name');
+
+        if (error) {
+          console.error('Error fetching stores:', error);
+          setMapError('매장 데이터를 불러오는데 실패했습니다.');
+        } else {
+          setStores(data || []);
+          if (data && data.length > 0) {
+            setSelectedStore(data[0].id);
+          }
+        }
+      } catch (err) {
+        console.error('Fetch error:', err);
+        setMapError('네트워크 오류가 발생했습니다.');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchStores();
+  }, []);
+
+  const filteredStores = stores.filter(s =>
+    s.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    (s.address_road?.toLowerCase().includes(searchQuery.toLowerCase())) ||
+    (s.address_raw?.toLowerCase().includes(searchQuery.toLowerCase()))
   );
+
+  // Initialize map after stores are loaded
+  useEffect(() => {
+    if (loading || stores.length === 0) return;
+
+    console.log("MapStrategy: Attempting to initialize map...");
+    const initMap = () => {
+      if (!(window as any).naver) {
+        console.error("MapStrategy: window.naver is not defined");
+        return;
+      }
+
+      console.log("MapStrategy: Initializing Naver Map...");
+      try {
+        // Clear existing markers
+        markersRef.current.forEach(marker => marker.setMap(null));
+        markersRef.current = [];
+
+        const firstStore = stores.find(s => s.lat && s.lng);
+        const centerLat = firstStore?.lat || 37.4979;
+        const centerLng = firstStore?.lng || 127.0276;
+
+        const mapOptions = {
+          center: new (window as any).naver.maps.LatLng(centerLat, centerLng),
+          zoom: 13,
+          zoomControl: false,
+          mapTypeControl: false,
+        };
+
+        const map = new (window as any).naver.maps.Map('map', mapOptions);
+        mapRef.current = map;
+        console.log("MapStrategy: Map initialized successfully");
+
+        // Add markers for stores with coordinates
+        stores.forEach((store) => {
+          if (!store.lat || !store.lng) return;
+
+          const markerColor = store.brand_type === 'guksunamu' ? '#7C3AED' : '#6B7280';
+
+          const marker = new (window as any).naver.maps.Marker({
+            position: new (window as any).naver.maps.LatLng(store.lat, store.lng),
+            map: map,
+            title: store.name,
+            icon: {
+              content: `
+                <div style="position: relative;">
+                  <div style="width: 16px; height: 16px; background: ${markerColor}; border-radius: 50%; border: 3px solid white; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);"></div>
+                </div>
+              `,
+              anchor: new (window as any).naver.maps.Point(8, 8),
+            }
+          });
+
+          (window as any).naver.maps.Event.addListener(marker, 'click', () => {
+            setSelectedStore(store.id);
+            map.panTo(new (window as any).naver.maps.LatLng(store.lat, store.lng));
+          });
+
+          markersRef.current.push(marker);
+        });
+      } catch (err: any) {
+        console.error("MapStrategy: Error initializing map", err);
+        setMapError(err.message || "Failed to initialize map");
+      }
+    };
+
+    if ((window as any).naver) {
+      initMap();
+    } else {
+      console.log("MapStrategy: Waiting for window.naver...");
+      let attempts = 0;
+      const interval = setInterval(() => {
+        attempts++;
+        if ((window as any).naver) {
+          initMap();
+          clearInterval(interval);
+        } else if (attempts > 50) {
+          clearInterval(interval);
+          setMapError("Naver Maps SDK failed to load within 5 seconds.");
+          console.error("MapStrategy: Timeout waiting for window.naver");
+        }
+      }, 100);
+      return () => clearInterval(interval);
+    }
+  }, [loading, stores]);
+
+  // Update map center when selected store changes
+  useEffect(() => {
+    if (selectedStore && mapRef.current) {
+      const store = stores.find(s => s.id === selectedStore);
+      if (store && store.lat && store.lng) {
+        const moveLatLon = new (window as any).naver.maps.LatLng(store.lat, store.lng);
+        mapRef.current.panTo(moveLatLon);
+      }
+    }
+  }, [selectedStore, stores]);
 
   return (
     <div className="h-full flex flex-col gap-6 overflow-hidden animate-in fade-in duration-500">
@@ -41,9 +162,9 @@ const MapStrategy: React.FC = () => {
         <div className="flex-1 flex flex-col sm:flex-row items-stretch sm:items-center gap-4">
           <div className="relative flex-1 max-w-lg">
             <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
-            <input 
-              type="text" 
-              placeholder="매장명, 지역, 상권 키워드로 검색..." 
+            <input
+              type="text"
+              placeholder="매장명, 지역, 상권 키워드로 검색..."
               className="w-full pl-12 pr-4 py-3.5 bg-gray-50 border-none rounded-2xl text-sm focus:ring-2 focus:ring-black outline-none transition-all font-medium"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
@@ -53,19 +174,18 @@ const MapStrategy: React.FC = () => {
             <div className="relative group">
               <Filter className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400 group-focus-within:text-black" size={14} />
               <select className="bg-gray-50 border-none rounded-2xl text-[11px] font-black uppercase pl-9 pr-8 py-3.5 outline-none focus:ring-2 focus:ring-black transition-all appearance-none">
-                <option>서울 전체</option>
-                <option>강남/서초</option>
-                <option>송파/강동</option>
-                <option>영등포/마포</option>
+                <option>전체 지역</option>
+                <option>서울</option>
+                <option>경기</option>
+                <option>인천</option>
               </select>
             </div>
             <div className="relative group">
               <MapIcon className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400 group-focus-within:text-black" size={14} />
               <select className="bg-gray-50 border-none rounded-2xl text-[11px] font-black uppercase pl-9 pr-8 py-3.5 outline-none focus:ring-2 focus:ring-black transition-all appearance-none">
-                <option>브랜드 전체</option>
-                <option>HBS Premium</option>
-                <option>HBS Black</option>
-                <option>HBS Classic</option>
+                <option>전체 브랜드</option>
+                <option>국수나무</option>
+                <option>경쟁점포</option>
               </select>
             </div>
           </div>
@@ -80,24 +200,14 @@ const MapStrategy: React.FC = () => {
 
       {/* Map & List Content Area */}
       <div className="flex-1 flex gap-6 overflow-hidden">
-        {/* Main Map Content */}
+        {/* Main Map Content - Now with Naver Maps */}
         <div className="flex-1 bg-white rounded-[48px] shadow-sm border border-gray-100 relative overflow-hidden group">
-          {/* Mock Map Background */}
-          <div className="absolute inset-0 bg-[#F1F3F5] flex items-center justify-center">
-            {/* Grid Pattern */}
-            <div className="absolute inset-0 opacity-[0.03] pointer-events-none" style={{ backgroundImage: 'radial-gradient(#000 1.5px, transparent 1.5px)', backgroundSize: '40px 40px' }}></div>
-            
-            {/* Mock Map Lines */}
-            <svg className="absolute inset-0 w-full h-full opacity-[0.05] pointer-events-none">
-              <path d="M0,100 L1000,400 M200,0 L500,800 M0,600 L1000,200" stroke="black" strokeWidth="20" fill="none" />
-            </svg>
-
-            <div className="flex flex-col items-center">
-              <div className="w-24 h-24 bg-white/50 backdrop-blur-xl rounded-full flex items-center justify-center mb-6 animate-pulse">
-                <Navigation size={40} className="text-gray-300" />
+          <div id="map" className="absolute inset-0 w-full h-full" onClick={(e) => e.stopPropagation()}>
+            {mapError && (
+              <div className="absolute inset-0 flex items-center justify-center bg-gray-100 text-red-500 font-bold p-4 text-center z-50">
+                <p>지도를 불러오는 중 오류가 발생했습니다: {mapError}<br /><span className="text-sm font-normal text-gray-600">콘솔 로그를 확인해주세요. (F12)</span></p>
               </div>
-              <p className="text-sm font-bold text-gray-400">지도를 드래그하여 상권을 탐색하세요</p>
-            </div>
+            )}
           </div>
 
           {/* Map Layer Controls */}
@@ -109,44 +219,30 @@ const MapStrategy: React.FC = () => {
 
           {/* Floating Action Controls */}
           <div className="absolute top-8 right-8 flex flex-col gap-2 z-10">
-              <button className="w-12 h-12 bg-white border border-gray-100 rounded-2xl shadow-xl flex items-center justify-center text-gray-600 hover:text-black hover:bg-gray-50 transition-all"><Crosshair size={22} /></button>
-              <div className="flex flex-col bg-white border border-gray-100 rounded-2xl shadow-xl overflow-hidden mt-2">
-                <button className="w-12 h-12 flex items-center justify-center text-gray-600 font-bold hover:bg-gray-50 border-b border-gray-50 text-xl">+</button>
-                <button className="w-12 h-12 flex items-center justify-center text-gray-600 font-bold hover:bg-gray-50 text-xl">-</button>
-              </div>
-          </div>
-
-          {/* Selected Marker Detail Overlay */}
-          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-20">
-            <div className="relative group cursor-pointer">
-              <div className="w-4 h-4 bg-purple-600 rounded-full border-2 border-white shadow-lg animate-ping absolute inset-0"></div>
-              <div className="w-4 h-4 bg-purple-600 rounded-full border-2 border-white shadow-lg relative"></div>
-              
-              <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-4">
-                <div className="bg-black text-white p-5 rounded-[24px] shadow-2xl w-56 animate-in slide-in-from-bottom-2 duration-300">
-                  <div className="flex items-center gap-3 mb-3">
-                    <div className="w-10 h-10 rounded-xl bg-white/20 flex items-center justify-center">
-                      <ShoppingBag size={18} />
-                    </div>
-                    <div>
-                      <h5 className="text-xs font-black leading-none mb-1">강남 삼성타운점</h5>
-                      <p className="text-[10px] text-white/50 font-medium tracking-tight">서울 강남구 테헤란로</p>
-                    </div>
-                  </div>
-                  <div className="flex items-center justify-between border-t border-white/10 pt-3">
-                    <div className="text-center">
-                      <p className="text-[9px] text-white/50 font-black uppercase tracking-tighter mb-0.5">매출 성장</p>
-                      <p className="text-xs font-black text-emerald-400">+18.5%</p>
-                    </div>
-                    <div className="w-[1px] h-6 bg-white/10"></div>
-                    <div className="text-center">
-                      <p className="text-[9px] text-white/50 font-black uppercase tracking-tighter mb-0.5">유동 인구</p>
-                      <p className="text-xs font-black">24.5k</p>
-                    </div>
-                  </div>
-                  <div className="absolute -bottom-2 left-1/2 -translate-x-1/2 w-4 h-4 bg-black rotate-45"></div>
-                </div>
-              </div>
+            <button
+              className="w-12 h-12 bg-white border border-gray-100 rounded-2xl shadow-xl flex items-center justify-center text-gray-600 hover:text-black hover:bg-gray-50 transition-all"
+              onClick={() => {
+                if (mapRef.current && (window as any).navigator.geolocation) {
+                  (window as any).navigator.geolocation.getCurrentPosition((position: any) => {
+                    const lat = position.coords.latitude;
+                    const lng = position.coords.longitude;
+                    const newCenter = new (window as any).naver.maps.LatLng(lat, lng);
+                    mapRef.current.setCenter(newCenter);
+                  });
+                }
+              }}
+            >
+              <Crosshair size={22} />
+            </button>
+            <div className="flex flex-col bg-white border border-gray-100 rounded-2xl shadow-xl overflow-hidden mt-2">
+              <button
+                onClick={() => mapRef.current?.setZoom(mapRef.current.getZoom() + 1)}
+                className="w-12 h-12 flex items-center justify-center text-gray-600 font-bold hover:bg-gray-50 border-b border-gray-50 text-xl"
+              >+</button>
+              <button
+                onClick={() => mapRef.current?.setZoom(mapRef.current.getZoom() - 1)}
+                className="w-12 h-12 flex items-center justify-center text-gray-600 font-bold hover:bg-gray-50 text-xl"
+              >-</button>
             </div>
           </div>
         </div>
@@ -156,53 +252,62 @@ const MapStrategy: React.FC = () => {
           <div className="p-8 border-b border-gray-50">
             <div className="flex items-center justify-between mb-2">
               <h4 className="text-sm font-black text-gray-900 uppercase tracking-tighter">매장 탐색 결과</h4>
-              <span className="text-[10px] font-black text-purple-600 bg-purple-50 px-2 py-0.5 rounded-md">{filteredStores.length}</span>
+              <span className="text-[10px] font-black text-purple-600 bg-purple-50 px-2 py-0.5 rounded-md">
+                {loading ? '...' : filteredStores.length}
+              </span>
             </div>
             <p className="text-[11px] text-gray-400 font-medium">검색된 매장을 선택하여 지도에서 확인하세요.</p>
           </div>
-          
+
           <div className="flex-1 overflow-y-auto p-4 space-y-2 custom-scrollbar">
-            {filteredStores.map((store) => (
-              <div 
-                key={store.id} 
-                onClick={() => setSelectedStore(store.id)}
-                className={`p-5 rounded-[28px] border transition-all cursor-pointer group flex items-start gap-4 ${
-                  selectedStore === store.id 
-                    ? 'bg-black border-black shadow-xl shadow-black/10' 
-                    : 'bg-white border-transparent hover:border-gray-100 hover:bg-gray-50'
-                }`}
-              >
-                <div className={`w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 ${
-                  selectedStore === store.id ? 'bg-white/10 text-white' : 'bg-gray-50 text-gray-400 group-hover:bg-white'
-                }`}>
-                  <MapPin size={20} />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center justify-between mb-1">
-                    <span className={`text-[9px] font-black px-2 py-0.5 rounded-md ${
-                      selectedStore === store.id 
-                        ? 'bg-white/20 text-white' 
-                        : store.brand.includes('Premium') ? 'bg-purple-100 text-purple-600' : 'bg-gray-100 text-gray-500'
-                    }`}>
-                      {store.brand}
-                    </span>
-                    <div className={`flex items-center gap-1 text-[10px] font-bold ${selectedStore === store.id ? 'text-emerald-400' : 'text-emerald-500'}`}>
-                      <ArrowUpRight size={12} />
-                      {store.sales}
-                    </div>
-                  </div>
-                  <h5 className={`text-sm font-bold truncate ${selectedStore === store.id ? 'text-white' : 'text-gray-900'}`}>{store.name}</h5>
-                  <p className={`text-[10px] font-medium truncate mt-0.5 ${selectedStore === store.id ? 'text-white/50' : 'text-gray-400'}`}>{store.address}</p>
-                </div>
+            {loading ? (
+              <div className="flex items-center justify-center p-8">
+                <Loader2 className="animate-spin text-gray-400" size={24} />
               </div>
-            ))}
-            {filteredStores.length === 0 && (
+            ) : filteredStores.length > 0 ? (
+              filteredStores.map((store) => (
+                <div
+                  key={store.id}
+                  onClick={() => setSelectedStore(store.id)}
+                  className={`p-5 rounded-[28px] border transition-all cursor-pointer group flex items-start gap-4 ${selectedStore === store.id
+                    ? 'bg-black border-black shadow-xl shadow-black/10'
+                    : 'bg-white border-transparent hover:border-gray-100 hover:bg-gray-50'
+                    }`}
+                >
+                  <div className={`w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 ${selectedStore === store.id ? 'bg-white/10 text-white' : 'bg-gray-50 text-gray-400 group-hover:bg-white'
+                    }`}>
+                    <MapPin size={20} />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between mb-1">
+                      <span className={`text-[9px] font-black px-2 py-0.5 rounded-md ${selectedStore === store.id
+                        ? 'bg-white/20 text-white'
+                        : store.brand_type === 'guksunamu' ? 'bg-purple-100 text-purple-600' : 'bg-gray-100 text-gray-500'
+                        }`}>
+                        {store.brand_type === 'guksunamu' ? '국수나무' : '경쟁점포'}
+                      </span>
+                      {store.region_sigungu && (
+                        <span className={`text-[10px] font-medium ${selectedStore === store.id ? 'text-white/60' : 'text-gray-400'}`}>
+                          {store.region_sigungu}
+                        </span>
+                      )}
+                    </div>
+                    <h5 className={`text-sm font-bold truncate ${selectedStore === store.id ? 'text-white' : 'text-gray-900'}`}>
+                      {store.name_display || store.name}
+                    </h5>
+                    <p className={`text-[10px] font-medium truncate mt-0.5 ${selectedStore === store.id ? 'text-white/50' : 'text-gray-400'}`}>
+                      {store.address_road || store.address_raw || '-'}
+                    </p>
+                  </div>
+                </div>
+              ))
+            ) : (
               <div className="p-8 text-center">
                 <p className="text-sm font-bold text-gray-400">검색 결과가 없습니다.</p>
               </div>
             )}
           </div>
-          
+
           <div className="p-6 bg-gray-50/50 border-t border-gray-50">
             <button className="w-full py-4 bg-white border border-gray-200 rounded-2xl text-[11px] font-black uppercase tracking-widest text-gray-900 hover:bg-gray-900 hover:text-white hover:border-black transition-all shadow-sm">
               전체 리스트 내려받기
