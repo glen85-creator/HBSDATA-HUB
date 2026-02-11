@@ -23,7 +23,7 @@ dist-ssr
 *.sln
 *.sw?
 .env
+.env.local
 
 # Supabase
 supabase/.temp/
-.env.example
