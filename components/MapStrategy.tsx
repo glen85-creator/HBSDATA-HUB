@@ -18,8 +18,11 @@ const MapStrategy: React.FC = () => {
   const [mapError, setMapError] = useState<string | null>(null);
   const [stores, setStores] = useState<StoreMaster[]>([]);
   const [loading, setLoading] = useState(true);
+  const [showRadius, setShowRadius] = useState(false);
+  const [radiusSize, setRadiusSize] = useState(300);
   const mapRef = useRef<any>(null);
   const markersRef = useRef<any[]>([]);
+  const circlesRef = useRef<any[]>([]);
 
   // Fetch stores from Supabase
   useEffect(() => {
@@ -140,9 +143,49 @@ const MapStrategy: React.FC = () => {
           console.error("MapStrategy: Timeout waiting for window.naver");
         }
       }, 100);
-      return () => clearInterval(interval);
+      return () => {
+        clearInterval(interval);
+        // Circle 정리
+        circlesRef.current.forEach(circle => circle.setMap(null));
+        circlesRef.current = [];
+      };
     }
   }, [loading, stores]);
+
+  // Circle 생성/제거 useEffect
+  useEffect(() => {
+    if (!mapRef.current || stores.length === 0) return;
+
+    // 기존 Circle 모두 제거
+    circlesRef.current.forEach(circle => circle.setMap(null));
+    circlesRef.current = [];
+
+    // showRadius가 true일 때만 Circle 생성
+    if (showRadius) {
+      stores.forEach((store) => {
+        if (!store.lat || !store.lng) return;
+
+        // 매장 타입에 따른 색상 설정
+        // 자사: 보라색 (#7C3AED), 경쟁: 빨간색 (#EF4444)
+        const circleColor = store.brand_type === 'guksunamu' ? '#7C3AED' : '#EF4444';
+
+        const circle = new (window as any).naver.maps.Circle({
+          map: mapRef.current,
+          center: new (window as any).naver.maps.LatLng(store.lat, store.lng),
+          radius: radiusSize,
+          fillColor: circleColor,
+          fillOpacity: 0.12,
+          strokeColor: circleColor,
+          strokeOpacity: 0.5,
+          strokeWeight: 2,
+          clickable: false,
+          zIndex: 100
+        });
+
+        circlesRef.current.push(circle);
+      });
+    }
+  }, [showRadius, radiusSize, stores]);
 
   // Update map center when selected store changes
   useEffect(() => {
@@ -217,6 +260,23 @@ const MapStrategy: React.FC = () => {
             <button className="px-4 py-2 text-gray-400 hover:text-black rounded-xl text-[10px] font-black uppercase tracking-tight transition-colors">Density</button>
           </div>
 
+          {/* Radius Visualization Toggle Button */}
+          <div className="absolute top-8 left-[320px] z-10">
+            <button
+              onClick={() => setShowRadius(!showRadius)}
+              className={`px-5 py-3 rounded-2xl text-[11px] font-black uppercase tracking-tight transition-all shadow-lg border ${
+                showRadius
+                  ? 'bg-purple-600 text-white border-purple-600'
+                  : 'bg-white/80 backdrop-blur-md text-gray-600 border-white hover:bg-purple-50 hover:text-purple-600'
+              }`}
+            >
+              <div className="flex items-center gap-2">
+                <div className={`w-2 h-2 rounded-full ${showRadius ? 'bg-white' : 'bg-purple-600'}`}></div>
+                반경 300M 시각화
+              </div>
+            </button>
+          </div>
+
           {/* Floating Action Controls */}
           <div className="absolute top-8 right-8 flex flex-col gap-2 z-10">
             <button
@@ -245,6 +305,45 @@ const MapStrategy: React.FC = () => {
               >-</button>
             </div>
           </div>
+
+          {/* Legend - 반경이 표시될 때만 보임 */}
+          {showRadius && (
+            <div className="absolute bottom-8 left-1/2 -translate-x-1/2 z-10">
+              <div className="bg-white/90 backdrop-blur-md rounded-2xl shadow-xl border border-white p-4">
+                <h5 className="text-[10px] font-black uppercase tracking-tight text-gray-900 mb-3">
+                  상권 범례
+                </h5>
+                <div className="flex gap-6">
+                  {/* 자사 매장 범례 */}
+                  <div className="flex items-center gap-2">
+                    <div className="relative w-6 h-6">
+                      <div className="absolute inset-0 bg-purple-600 rounded-full opacity-15"></div>
+                      <div className="absolute inset-0 border-2 border-purple-600 rounded-full opacity-50"></div>
+                      <div className="absolute inset-0 flex items-center justify-center">
+                        <div className="w-2 h-2 bg-purple-600 rounded-full"></div>
+                      </div>
+                    </div>
+                    <span className="text-[11px] font-semibold text-gray-700">
+                      자사 매장 반경 (300m)
+                    </span>
+                  </div>
+                  {/* 경쟁 매장 범례 */}
+                  <div className="flex items-center gap-2">
+                    <div className="relative w-6 h-6">
+                      <div className="absolute inset-0 bg-red-500 rounded-full opacity-15"></div>
+                      <div className="absolute inset-0 border-2 border-red-500 rounded-full opacity-50"></div>
+                      <div className="absolute inset-0 flex items-center justify-center">
+                        <div className="w-2 h-2 bg-gray-500 rounded-full"></div>
+                      </div>
+                    </div>
+                    <span className="text-[11px] font-semibold text-gray-700">
+                      경쟁 매장 반경 (300m)
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Right Sidebar Store List Panel */}

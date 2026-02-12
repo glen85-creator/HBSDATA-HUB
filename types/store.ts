@@ -3,11 +3,14 @@
 export interface StoreMaster {
     id: string;
     brand_type: 'guksunamu' | 'competitor';
+    brand_name: string | null;
     name: string;
     name_display: string | null;
     address_raw: string | null;
     address_road: string | null;
     postcode: string | null;
+    phone: string | null;
+    status: string | null;
     lat: number | null;
     lng: number | null;
     region_sido: string | null;
